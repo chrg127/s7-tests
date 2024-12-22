@@ -1,132 +1,69 @@
-#include <cstdlib>
-#include <cstdio>
-#include <cstring>
+#include "s7.hpp"
 #include <unordered_set>
-#include <algorithm>
-#include "s7/s7.h"
-
-int tag = 0;
-
-struct S7Equal {
-    s7_scheme *sc;
-
-    bool operator()(const s7_pointer &a, const s7_pointer &b) const {
-        return s7_is_equal(sc, a, b);
-    }
-};
-
-struct S7Hash {
-    s7_scheme *sc;
-
-    size_t operator()(const s7_pointer& p) const
-    {
-        return s7_hash_code(sc, p, s7_name_to_value(sc, "equal?"));
-    }
-};
 
 struct Set {
-    std::unordered_set<s7_pointer, S7Hash, S7Equal> set;
+    std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
+
+    explicit Set(s7_scheme *sc)
+        : set(std::unordered_set<s7_pointer, s7::Hash, s7::Equal>(512, s7::Hash(sc), s7::Equal(sc))) {}
+
+    void gc_mark(s7::s7 &scheme)
+    {
+        for (s7_pointer value : set) {
+            scheme.mark(value);
+        }
+    }
+
+    std::string to_string(s7::s7 &scheme)
+    {
+        std::string str = "#<set(";
+        for (const s7_pointer &value : set) {
+            str += scheme.to_string(value) + ", ";
+        }
+        str += ")>";
+        return str;
+    }
 };
 
-s7_pointer make_set(s7_scheme *sc, s7_pointer args)
-{
-    Set *set = new Set();
-    set->set = std::unordered_set<s7_pointer, S7Hash, S7Equal>(512, S7Hash(sc), S7Equal(sc));
-    return s7_make_c_object(sc, tag, (void *) set);
-}
-
-s7_pointer is_set(s7_scheme *sc, s7_pointer args)
-{
-    return(s7_make_boolean(sc, s7_is_c_object(s7_car(args))
-                            && s7_c_object_type(s7_car(args)) == tag));
-}
-
 template <typename T>
-bool is_subset(const T &sa, const T &sb)
+bool is_subset(const T &a, const T &b)
 {
-    return std::all_of(sb.begin(), sb.end(), [&](const auto &x) {
-        return sa.find(x) != sa.end();
+    return std::all_of(b.begin(), b.end(), [&](const auto &x) {
+        return a.find(x) != a.end();
     });
 }
 
-template <typename T>
-bool sets_are_equal(const T &sa, const T &sb)
+bool operator==(const Set &a, const Set &b)
 {
-    return sa.size() == sb.size() && is_subset(sa, sb);
-}
-
-s7_pointer set_is_eq(s7_scheme *sc, s7_pointer args)
-{
-    s7_pointer p1 = s7_car(args);
-    s7_pointer p2 = s7_cadr(args);
-    if (p1 == p2) {
-        return s7_t(sc);
-    }
-    if (!s7_is_c_object(p2) || (s7_c_object_type(p2) != tag)) {
-        return s7_f(sc);
-    }
-    Set *s1 = (Set *) s7_c_object_value(p1);
-    Set *s2 = (Set *) s7_c_object_value(p2);
-    return s7_make_boolean(sc, sets_are_equal(s1->set, s2->set));
-}
-
-s7_pointer set_to_string(s7_scheme *sc, s7_pointer args)
-{
-    Set *set = (Set *) s7_c_object_value(s7_car(args));
-    std::string str = "<#set(";
-    for (const s7_pointer &value : set->set) {
-        str += std::string(s7_object_to_c_string(sc, value)) + ", ";
-    }
-    str += ")>";
-    return s7_make_string(sc, str.c_str());
-}
-
-s7_pointer mark_set(s7_scheme *sc, s7_pointer obj)
-{
-    Set *set = (Set *) s7_c_object_value(obj);
-    for (s7_pointer value : set->set) {
-        s7_mark(value);
-    }
-    return NULL;
-}
-
-s7_pointer free_set(s7_scheme *sc, s7_pointer obj)
-{
-    delete ((Set *) s7_c_object_value(obj));
-    return NULL;
+    return a.set.size() == b.set.size() && is_subset(a.set, b.set);
 }
 
 s7_pointer set_add(s7_scheme *sc, s7_pointer args)
 {
-    Set *set = (Set *) s7_c_object_value(s7_car(args));
+    s7::s7 &scheme = *reinterpret_cast<s7::s7 *>(&sc);
+    s7_pointer arg = s7_car(args);
+    // if (!scheme.is<Set>(arg)) {
+    //     return scheme.wrong_argument_type_error("set-add!", 1, arg, "set");
+    // }
+    // Set *set = scheme.to<Set>(arg);
+    auto opt = scheme.to_opt<Set>(arg);
+    if (!opt) {
+        return scheme.wrong_argument_type_error("set-add!", 1, arg, "set");
+    }
+    Set *set = opt.value();
     s7_pointer value = s7_cadr(args);
     set->set.insert(value);
-    return s7_undefined(sc);
+    return scheme.undefined();
 }
 
-int main(int argc, char **argv)
+int main()
 {
-    s7_scheme *s7 = s7_init();
-    s7_define_variable(s7, "*listener-prompt*", s7_make_string(s7, ">"));
+    s7::s7 scheme;
 
-    tag = s7_make_c_type(s7, "set");
-    s7_c_type_set_gc_free(s7, tag, free_set);
-    s7_c_type_set_gc_mark(s7, tag, mark_set);
-    s7_c_type_set_is_equal(s7, tag, set_is_eq);
-    s7_c_type_set_to_string(s7, tag, set_to_string);
-    s7_define_function(s7, "set", make_set, 0, 0, false, "(make-set) creates a new set");
-    s7_define_function(s7, "set?", is_set, 1, 0, false, "(set? anything) returns #t if its argument is a set");
-    s7_define_function(s7, "set-add!", set_add, 2, 0, false, "(set-add! set value) adds value to set");
+    scheme.make_c_type<Set>("set");
+    scheme.define_function("set-add!", set_add, 2, 0, false, "(set-add! set value) adds value to set");
 
-    while (1) {
-        char buffer[512];
-        printf("> ");
-        fgets(buffer, 512, stdin);
-        if ((buffer[0] != '\n') || (strlen(buffer) > 1)) {
-            char response[1024];
-            snprintf(response, 1024, "(write %s)", buffer);
-            s7_eval_c_string(s7, response); /* evaluate input and write the result */
-        }
-        printf("\n");
-    }
+    scheme.repl();
+    return 0;
 }
+
