@@ -1,0 +1,9 @@
+// #define HAVE_COMPLEX_NUMBERS 0
+// #define HAVE_COMPLEX_TRIG 0
+// #define WITH_GMP 0
+// #define WITH_SYSTEM_EXTRAS 0
+// #define WITH_MULTITHREAD_CHECKS 1
+// #define DISABLE_FILE_OUTPUT 1
+
+#define WITH_WARNINGS 1
+#define S7_DEBUGGING 1
