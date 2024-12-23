@@ -84,11 +84,11 @@ bool operator==(const List::iterator &a, const List::iterator &b)
         || (a.p != nullptr && b.p != nullptr && s7_is_eq(a.p, b.p));
 }
 
+struct Variable;
+
 struct s7 {
-private:
     s7_scheme *sc;
 
-public:
     s7() : sc(s7_init()) {}
     ~s7() { s7_free(sc); }
 
@@ -312,26 +312,24 @@ public:
         return s7_wrong_type_arg_error(sc, function_name.data(), arg_number, arg, desc.data());
     }
 
-    /* define/get/set variables */
+    /* variables and symbols */
     template <typename T>
-    void defvar(std::string_view name, const T &value, std::string_view doc = "")
+    s7_pointer define(std::string_view name, const T &value, std::string_view doc = "")
     {
         auto object = this->from<T>(value);
-        s7_define_variable_with_documentation(sc, name.data(), object, doc.data());
+        return s7_define_variable_with_documentation(sc, name.data(), object, doc.data());
     }
 
     template <typename T>
-    void set_value(std::string_view name, const T &value)
+    s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
     {
         auto object = this->from<T>(value);
-        s7_symbol_set_value(sc, s7_make_symbol(sc, name.data()), object);
+        return s7_define_constant_with_documentation(sc, name.data(), object, doc.data());
     }
 
-    template <typename T>
-    T get_value(std::string_view name)
-    {
-        return this->to<T>(s7_name_to_value(sc, name.data()));
-    }
+    friend struct Variable;
+
+    Variable operator[](std::string_view name);
 
     /* functions */
     template <typename... T>
@@ -442,5 +440,37 @@ public:
         return std::nullopt;
     }
 };
+
+struct Variable {
+    s7 *scheme;
+    s7_pointer sym;
+
+    template <typename T>
+    Variable & operator=(const T &v)
+    {
+        s7_symbol_set_value(scheme->sc, sym, scheme->from<T>(v)); return *this;
+    }
+
+    template <typename T>
+    T as()
+    {
+        return scheme->to<T>(s7_symbol_value(scheme->sc, sym));
+    }
+
+    template <typename T>
+    auto as_opt()
+    {
+        return scheme->to_opt<T>(s7_symbol_value(scheme->sc, sym));
+    }
+};
+
+Variable s7::operator[](std::string_view name)
+{
+    auto sym = s7_symbol_table_find_name(this->sc, name.data());
+    if (!sym) {
+        sym = s7_define_variable(this->sc, name.data(), s7_nil(sc));
+    }
+    return Variable(this, sym);
+}
 
 } // namespace s7
