@@ -97,11 +97,38 @@ public:
     s7(s7 &&other) { operator=(std::move(other)); }
     s7 & operator=(s7 &&other) { this->sc = other.sc; other.sc = nullptr; return *this; }
 
+    /* eval/repl stuff */
     s7_pointer eval(std::string_view code)
     {
         return s7_eval_c_string(sc, code.data());
     }
 
+    void repl(
+        std::function<bool(std::string_view)> quit = [](std::string_view) { return false; },
+        std::function<void(std::string_view)> output = [](std::string_view s) {
+            printf("%s", s.data());
+        },
+        std::function<std::string()> input = []() {
+            char buffer[512];
+            fgets(buffer, sizeof(buffer), stdin);
+            return std::string(buffer);
+        }
+    )
+    {
+        for (;;) {
+            output("> ");
+            auto s = input();
+            if (quit(s)) {
+                break;
+            }
+            if (s[0] != '\n' || s.size() > 1) {
+                output(to_string(eval(s)));
+            }
+            output("\n");
+        }
+    }
+
+    /* gc stuff */
     void mark(s7_pointer p)
     {
         s7_mark(p);
@@ -109,8 +136,9 @@ public:
 
     /* constants */
     s7_pointer undefined() { return s7_undefined(sc); }
+    s7_pointer nil() { return s7_nil(sc); }
 
-    /* function for inspecting and converting from/to scheme objects */
+    /* functions for inspecting and converting from/to scheme objects */
     template <typename T>
     bool is(s7_pointer p)
     {
@@ -252,7 +280,7 @@ public:
     }
 
     template <typename T>
-    std::optional<std::invoke_result_t<decltype(to<T>), s7_pointer>> to_opt(s7_pointer p)
+    auto to_opt(s7_pointer p) -> std::optional<decltype(std::declval<s7>().to<T>(p))>
     {
         if (!is<T>(p)) {
             return std::nullopt;
@@ -266,20 +294,25 @@ public:
         return this->to<T>(s7_object_to_string(sc, p, true));
     }
 
-    template <typename... T>
-    s7_pointer mklist(T&&... args)
+    template <typename T>
+    List list(const T &arg)
     {
-        s7_pointer p = s7_nil(sc);
-        auto update = [&](auto &&arg) { p = s7_cons(sc, this->from(arg), p); };
-        (update(std::forward<decltype(args)>(args)), ...);
-        return p;
+        return List(s7_cons(sc, this->from<T>(arg), s7_nil(sc)));
     }
 
+    template <typename T, typename... Args>
+    List list(const T &arg, Args&&... args)
+    {
+        return List(s7_cons(sc, this->from<T>(arg), list(args...).ptr()));
+    }
+
+    /* errors */
     s7_pointer wrong_argument_type_error(std::string_view function_name, int arg_number, s7_pointer arg, std::string_view desc)
     {
         return s7_wrong_type_arg_error(sc, function_name.data(), arg_number, arg, desc.data());
     }
 
+    /* define/get/set variables */
     template <typename T>
     void defvar(std::string_view name, const T &value, std::string_view doc = "")
     {
@@ -304,7 +337,7 @@ public:
     template <typename... T>
     s7_pointer call(std::string_view name, T&&... args)
     {
-        return s7_call(sc, s7_name_to_value(sc, name.data()), this->mklist(args...));
+        return s7_call(sc, s7_name_to_value(sc, name.data()), this->list(args...).ptr());
     }
 
     s7_pointer define_function(std::string_view name, s7_function func, s7_int required_args, s7_int optional_args, bool rest_arg, std::string_view doc = "")
@@ -312,11 +345,13 @@ public:
         return s7_define_function(sc, name.data(), func, required_args, optional_args, rest_arg, doc.data());
     }
 
+    /*
     template <typename R, typename... Args>
     void define_fun_from_ptr(std::string_view name, std::string_view doc, R (*f)(Args...))
     {
         constexpr auto num_args = sizeof...(Args);
     }
+    */
 
     /* usertypes */
     template <typename T>
@@ -405,31 +440,6 @@ public:
             i++;
         }
         return std::nullopt;
-    }
-
-    void repl(
-        std::function<bool(std::string_view)> quit = [](std::string_view) { return false; },
-        std::function<void(std::string_view)> output = [](std::string_view s) {
-            printf("%s", s.data());
-        },
-        std::function<std::string()> input = []() {
-            char buffer[512];
-            fgets(buffer, sizeof(buffer), stdin);
-            return std::string(buffer);
-        }
-    )
-    {
-        for (;;) {
-            output("> ");
-            auto s = input();
-            if (quit(s)) {
-                break;
-            }
-            if (s[0] != '\n' || s.size() > 1) {
-                output(to_string(eval(s)));
-            }
-            output("\n");
-        }
     }
 };
 

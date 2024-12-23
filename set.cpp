@@ -42,15 +42,13 @@ s7_pointer set_add(s7_scheme *sc, s7_pointer args)
 {
     s7::s7 &scheme = *reinterpret_cast<s7::s7 *>(&sc);
     s7_pointer arg = s7_car(args);
-    // if (!scheme.is<Set>(arg)) {
-    //     return scheme.wrong_argument_type_error("set-add!", 1, arg, "set");
-    // }
-    // Set *set = scheme.to<Set>(arg);
+
     auto opt = scheme.to_opt<Set>(arg);
     if (!opt) {
         return scheme.wrong_argument_type_error("set-add!", 1, arg, "set");
     }
     Set *set = opt.value();
+
     s7_pointer value = s7_cadr(args);
     set->set.insert(value);
     return scheme.undefined();
