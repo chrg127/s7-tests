@@ -54,21 +54,20 @@ void test_conversion()
     scheme.repl();
 }
 
-/*
 double add_double(double a, double b) { return a + b; }
 
-int test_functions()
+void test_define_function()
 {
-    s7 s7;
-    s7.define_fun_from_ptr("hi", "doc", add_double);
-    s7.define_fun_from_ptr("repl", "doc", repl);
+    s7::s7 scheme;
+    auto f = scheme.define_fun_from_ptr("test", "doc", add_double);
+    scheme.repl();
 }
-*/
 
 int main()
 {
-    test_scheme_defined_function();
+    // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
+    test_define_function();
 }
 

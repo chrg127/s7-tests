@@ -343,13 +343,31 @@ struct s7 {
         return s7_define_function(sc, name.data(), func, required_args, optional_args, rest_arg, doc.data());
     }
 
-    /*
     template <typename R, typename... Args>
-    void define_fun_from_ptr(std::string_view name, std::string_view doc, R (*f)(Args...))
+    s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, R (*fptr)(Args...))
     {
         constexpr auto num_args = sizeof...(Args);
+
+        auto let = s7_sublet(this->sc, s7_curlet(this->sc), this->nil());
+        s7_define(sc, let, s7_make_symbol(sc, "test-var"), this->from(42));
+
+        auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            auto let = s7_curlet(sc);
+            auto test_var = s7_let_ref(sc, let, s7_make_symbol(sc, "test-var"));
+            printf("test_var = %d\n", s7_integer(test_var)); // doesn't quite work...
+            return s7_nil(sc);
+        };
+
+        auto p = s7_make_typed_function_with_environment(
+            this->sc, name.data(), f, num_args, 0, false, doc.data(),
+            // TODO: temporary signature
+            s7_make_signature(sc, 4, s7_t(sc), s7_t(sc), s7_make_symbol(sc, "real?"), s7_make_symbol(sc, "real?")),
+            let
+        );
+
+        s7_define(sc, s7_rootlet(sc), s7_make_symbol(sc, name.data()), p);
+        return p;
     }
-    */
 
     /* usertypes */
     template <typename T>
