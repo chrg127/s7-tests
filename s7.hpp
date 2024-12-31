@@ -8,6 +8,7 @@
 #include <functional>
 #include <unordered_map>
 #include <optional>
+#include <utility>
 #include "s7/s7.h"
 
 namespace s7 {
@@ -40,7 +41,7 @@ class List {
 public:
     explicit List(s7_pointer p) : p{p} {}
 
-    s7_pointer operator[](size_t i) const
+    s7_pointer operator[](std::size_t i) const
     {
         s7_pointer x = this->p;
         while (i-- > 0) {
@@ -54,7 +55,9 @@ public:
     const s7_pointer ptr() const { return p; }
     s7_pointer ptr() { return p; }
 
-    size_t size() const
+    s7_pointer advance() { auto tmp = s7_car(p); p = s7_cdr(p); return tmp; }
+
+    std::size_t size() const
     {
         size_t s = 0;
         for (auto p = this->p; s7_is_pair(p); p = s7_cdr(p), s++)
@@ -348,24 +351,22 @@ struct s7 {
     {
         constexpr auto num_args = sizeof...(Args);
 
-        auto let = s7_sublet(this->sc, s7_curlet(this->sc), this->nil());
-        s7_define(sc, let, s7_make_symbol(sc, "test-var"), this->from(42));
-
+        auto private_name = std::format("__cpp:{}", name);
         auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto let = s7_curlet(sc);
-            auto test_var = s7_let_ref(sc, let, s7_make_symbol(sc, "test-var"));
-            printf("test_var = %d\n", s7_integer(test_var)); // doesn't quite work...
-            return s7_nil(sc);
+            auto &scheme = *reinterpret_cast<s7 *>(s7_integer(s7_car(args)));
+            auto *fn = reinterpret_cast<R(*)(Args...)>(s7_integer(s7_cadr(args)));
+            auto arglist = List(s7_cddr(args));
+            auto res = fn(scheme.to<Args>(arglist.advance())...);
+            return scheme.from<R>(res);
         };
+        s7_define_function(sc, private_name.c_str(), f, num_args+2, 0, false, doc.data());
 
-        auto p = s7_make_typed_function_with_environment(
-            this->sc, name.data(), f, num_args, 0, false, doc.data(),
-            // TODO: temporary signature
-            s7_make_signature(sc, 4, s7_t(sc), s7_t(sc), s7_make_symbol(sc, "real?"), s7_make_symbol(sc, "real?")),
-            let
-        );
-
-        s7_define(sc, s7_rootlet(sc), s7_make_symbol(sc, name.data()), p);
+        auto eval_str = std::format(
+            "(let ((self {}) (fn {})) "
+              "(lambda args (apply {} (cons self (cons fn args)))))",
+            (uintptr_t) this, (uintptr_t) fptr, private_name);
+        auto p = eval(eval_str.c_str());
+        s7_define_variable_with_documentation(sc, name.data(), p, doc.data());
         return p;
     }
 

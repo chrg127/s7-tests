@@ -55,11 +55,13 @@ void test_conversion()
 }
 
 double add_double(double a, double b) { return a + b; }
+int add_int(int x, int y) { return x + y + 1; }
 
 void test_define_function()
 {
     s7::s7 scheme;
-    auto f = scheme.define_fun_from_ptr("test", "doc", add_double);
+    scheme.define_fun_from_ptr("add-double", "doc", add_double);
+    scheme.define_fun_from_ptr("add-int", "doc", add_int);
     scheme.repl();
 }
 
