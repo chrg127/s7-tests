@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <optional>
 #include <utility>
+#include <array>
 #include "s7/s7.h"
 
 namespace s7 {
@@ -88,6 +89,31 @@ bool operator==(const List::iterator &a, const List::iterator &b)
 }
 
 struct Variable;
+
+template <typename T>
+std::string_view type_to_string()
+{
+         if constexpr(std::is_same_v<T, s7_pointer>) { return "s7_pointer"; }
+    else if constexpr(std::is_same_v<T, double>) { return "real"; }
+    else if constexpr(std::is_same_v<T, bool>) { return "boolean"; }
+    else if constexpr(std::is_same_v<T, s7_int>
+                   || std::is_same_v<T, int>
+                   || std::is_same_v<T, short>
+                   || std::is_same_v<T, long>) { return "integer"; }
+    else if constexpr(std::is_same_v<T, double>) { return "real"; }
+    else if constexpr(std::is_same_v<T, const char *>
+                   || std::is_same_v<T, std::string>
+                   || std::is_same_v<T, std::string_view>) { return "string"; }
+    else if constexpr(std::is_same_v<T, unsigned char>) { return "character"; }
+    else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return "vector"; }
+    else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return "int-vector"; }
+    else if constexpr(std::is_same_v<T, std::span<double>>) { return "float-vector"; }
+    else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return "byte-vector"; }
+    else if constexpr(std::is_null_pointer_v<T>) { return "nil"; }
+    else if constexpr(std::is_same_v<T, std::is_pointer<T>>) { return "c-pointer"; }
+    else if constexpr(std::is_same_v<T, List>) { return "list"; }
+    else { return "?"; }
+}
 
 struct s7 {
     s7_scheme *sc;
@@ -351,20 +377,38 @@ struct s7 {
     {
         constexpr auto num_args = sizeof...(Args);
 
-        auto private_name = std::format("__cpp:{}", name);
         auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             auto &scheme = *reinterpret_cast<s7 *>(s7_integer(s7_car(args)));
             auto *fn = reinterpret_cast<R(*)(Args...)>(s7_integer(s7_cadr(args)));
-            auto arglist = List(s7_cddr(args));
-            auto res = fn(scheme.to<Args>(arglist.advance())...);
+            auto name = std::string_view(s7_string(s7_caddr(args)));
+            auto arglist = List(s7_cdddr(args));
+
+            // using this construct to get all arguments into optionals can be a source of
+            // problems: make sure evaluation order is consistently left to right everywhere
+            auto opts = std::tuple { scheme.to_opt<Args>(arglist.advance())... };
+            auto bools = std::apply([](auto &&...the_args) {
+                return std::array { the_args.has_value()... };
+            }, opts);
+            auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
+
+            if (first_wrong_type != bools.end()) {
+                auto i = first_wrong_type - bools.begin();
+                arglist = List(s7_cdddr(args));
+                auto types = std::array { type_to_string<Args>()... };
+                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
+            }
+            auto vals = std::apply([](auto &&...args) { return std::make_tuple(args.value()...); }, opts);
+            auto res  = std::apply(fn, vals);
             return scheme.from<R>(res);
         };
-        s7_define_function(sc, private_name.c_str(), f, num_args+2, 0, false, doc.data());
+
+        auto private_name = std::format("__cpp:{}", name);
+        s7_define_function(sc, private_name.c_str(), f, num_args+3, 0, false, doc.data());
 
         auto eval_str = std::format(
-            "(let ((self {}) (fn {})) "
-              "(lambda args (apply {} (cons self (cons fn args)))))",
-            (uintptr_t) this, (uintptr_t) fptr, private_name);
+            "(let ((self {}) (fn {}) (name \"{}\")) "
+              "(lambda args (apply {} (cons self (cons fn (cons name args))))))",
+            (uintptr_t) this, (uintptr_t) fptr, name, private_name);
         auto p = eval(eval_str.c_str());
         s7_define_variable_with_documentation(sc, name.data(), p, doc.data());
         return p;
